@@ -1,5 +1,11 @@
 package codesign
 
+import (
+	"errors"
+	"os"
+	"os/exec"
+)
+
 type Logger interface {
 	Debugw(msg string, keysAndValues ...interface{})
 }
@@ -29,7 +35,24 @@ func NewCodesign(opts *Options) *Checker {
 	return c
 }
 
+type InvalidSignature struct {
+	Err   error
+	Fname string
+}
+
+func (e *InvalidSignature) Error() string {
+	return e.Err.Error()
+}
+
 func (c *Checker) Verify(fname string) error {
+	cmd := exec.Command("codesign", "--verify", fname)
+	err := cmd.Run()
+	if err != nil {
+		return &InvalidSignature{
+			Err:   err,
+			Fname: fname,
+		}
+	}
 	return nil
 }
 
@@ -42,9 +65,17 @@ func (c *Checker) VerifyRecursive(fname string) (map[string]error, error) {
 	f = func(fname string) error {
 		deps, err := c.MachoInspector.ImportedLibraries(fname)
 		if err != nil {
+			var pe *os.PathError
+			if errors.As(err, &pe) {
+				return nil
+			}
 			return err
+
 		}
-		results[fname] = c.Verify(fname)
+		res := c.Verify(fname)
+		if res != nil {
+			results[fname] = res
+		}
 		visited[fname] = true
 		for _, dep := range deps {
 			if !visited[dep] {
